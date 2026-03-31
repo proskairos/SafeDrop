@@ -21,7 +21,6 @@ interface StorachaState {
   agentDid: string | null
   error: string | null
 
-  // ✅ Actions must be inside interface
   init: () => Promise<void>
   login: (email: string) => Promise<void>
   checkConnection: () => Promise<void>
@@ -32,7 +31,7 @@ interface StorachaState {
 // ─── Initial state ─────────────────────────────────────
 
 const initialState = {
-  status: 'idle',
+  status: 'idle' as StorachaStatus,
   email: '',
   spaceDid: null,
   spaceName: null,
@@ -45,9 +44,12 @@ const initialState = {
 
 let abortController: AbortController | null = null
 
+// ─── Storage helpers (SSR safe) ───────────────────────
+
 const STORAGE_KEY = 'safedrop-storacha-connected'
 
 function persistConnected(email?: string, did?: string | null) {
+  if (typeof window === 'undefined') return
   try {
     localStorage.setItem(
       STORAGE_KEY,
@@ -57,9 +59,38 @@ function persistConnected(email?: string, did?: string | null) {
 }
 
 function clearConnected() {
+  if (typeof window === 'undefined') return
   try {
     localStorage.removeItem(STORAGE_KEY)
   } catch {}
+}
+
+// ─── Helpers ──────────────────────────────────────────
+
+// ✅ Plan check
+async function hasPlan(client: any): Promise<boolean> {
+  try {
+    const account = Object.values(client.accounts())[0] as any
+    if (!account) return false
+
+    await client.capability.plan.get(account.did())
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ✅ Safe space access (fixes your error)
+function getSpaceDid(space: any): string | null {
+  if (!space) return null
+  return typeof space.did === 'function' ? space.did() : space.did || null
+}
+
+function getSpaceName(space: any): string | null {
+  if (!space) return null
+  return typeof space.name === 'function'
+    ? space.name()
+    : space.name || null
 }
 
 // ─── Store ────────────────────────────────────────────
@@ -67,7 +98,11 @@ function clearConnected() {
 export const useStorachaStore = create<StorachaState>((set, get) => ({
   ...initialState,
 
+  // ─── INIT ──────────────────────────────────────────
+
   init: async () => {
+    if (typeof window === 'undefined') return
+
     const { status } = get()
     if (
       status === 'initializing' ||
@@ -84,17 +119,16 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
       const client = await mod.getClient()
       const agentDid = client.did()
 
-      if (state.isConnected && state.spaceDid) {
-        persistConnected(state.accountEmail, agentDid)
-        set({
-          status: 'ready',
-          spaceDid: state.spaceDid,
-          spaceName: state.spaceName,
-          accountEmail: state.accountEmail,
-          agentDid,
-          error: null,
-        })
-      } else if (state.hasAccount && !state.hasSpace) {
+      if (!state.hasAccount) {
+        clearConnected()
+        set({ status: 'disconnected', error: null })
+        return
+      }
+
+      // ✅ Plan check
+      const planExists = await hasPlan(client)
+
+      if (!planExists) {
         set({
           status: 'needs-plan',
           accountEmail: state.accountEmail,
@@ -102,17 +136,45 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
           agentDid,
           error: null,
         })
-      } else {
-        clearConnected()
-        set({ status: 'disconnected', error: null })
+        return
       }
-    } catch {
+
+      // ✅ Space check
+      const space = client.currentSpace()
+
+      if (!space) {
+        set({
+          status: 'creating-space',
+          accountEmail: state.accountEmail,
+          agentDid,
+          error: null,
+        })
+        return
+      }
+
+      persistConnected(state.accountEmail, agentDid)
+
+      set({
+        status: 'ready',
+        spaceDid: getSpaceDid(space),
+        spaceName: getSpaceName(space),
+        accountEmail: state.accountEmail,
+        agentDid,
+        error: null,
+      })
+    } catch (err) {
+      console.error('Storacha init error:', err)
       set({
         status: 'disconnected',
-        error: 'Could not initialize Storacha.',
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Could not initialize Storacha.',
       })
     }
   },
+
+  // ─── LOGIN ─────────────────────────────────────────
 
   login: async (email: string) => {
     abortController?.abort()
@@ -140,6 +202,7 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
         set({ status: 'disconnected', error: null })
         return
       }
+
       set({
         status: 'disconnected',
         error:
@@ -150,6 +213,8 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
     }
   },
 
+  // ─── CHECK CONNECTION ──────────────────────────────
+
   checkConnection: async () => {
     set({ status: 'initializing', error: null })
 
@@ -158,26 +223,49 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
       const state = await mod.checkClientState()
       const client = await mod.getClient()
 
-      if (state.hasSpace) {
-        const agentDid = client.did()
-        persistConnected(state.accountEmail, agentDid)
+      const account = Object.values(client.accounts())[0] as any
 
+      if (!account) {
+        set({ status: 'disconnected' })
+        return
+      }
+
+      const agentDid = client.did()
+
+      // ✅ Plan check
+      const planExists = await hasPlan(client)
+
+      if (!planExists) {
         set({
-          status: 'ready',
-          spaceDid: state.spaceDid,
-          spaceName: state.spaceName,
-          accountEmail: state.accountEmail,
-          agentDid,
-          error: null,
+          status: 'needs-plan',
+          error: 'No plan detected yet.',
         })
         return
       }
 
+      // ✅ Space check
+      const space = client.currentSpace()
+
+      if (!space) {
+        set({
+          status: 'creating-space',
+          error: 'Plan exists but no space selected.',
+        })
+        return
+      }
+
+      persistConnected(state.accountEmail, agentDid)
+
       set({
-        status: 'needs-plan',
-        error: 'No plan detected yet.',
+        status: 'ready',
+        spaceDid: getSpaceDid(space),
+        spaceName: getSpaceName(space),
+        accountEmail: state.accountEmail,
+        agentDid,
+        error: null,
       })
-    } catch {
+    } catch (err) {
+      console.error('Storacha check error:', err)
       set({
         status: 'needs-plan',
         error: 'Could not check connection.',
@@ -185,12 +273,16 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
     }
   },
 
+  // ─── CANCEL ────────────────────────────────────────
+
   cancel: () => {
     abortController?.abort()
     abortController = null
     clearConnected()
     set({ status: 'disconnected', error: null })
   },
+
+  // ─── RESET ─────────────────────────────────────────
 
   reset: () => {
     abortController?.abort()
