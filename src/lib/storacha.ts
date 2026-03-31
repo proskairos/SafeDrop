@@ -18,6 +18,7 @@ type StorachaClient = {
   currentSpace: () => StorachaSpace | undefined
   setCurrentSpace: (did: string) => Promise<void>
   spaces: () => StorachaSpace[]
+  createSpace: (name?: string, options?: { account: StorachaAccount }) => Promise<StorachaSpace>
   uploadFile: (file: Blob, opts?: { retries?: number; signal?: AbortSignal; onShardStored?: (meta: { cid: CID }) => void }) => Promise<CID>
   did: () => string
 }
@@ -123,7 +124,7 @@ export async function uploadEncryptedBlob(
     }
   }
 
-  const file = new Blob([data], { type: 'application/octet-stream' })
+  const file = new Blob([data.buffer], { type: 'application/octet-stream' })
   const cid = await client.uploadFile(file, {
     signal: opts?.signal,
     ...(opts?.onShardStored && {
@@ -205,4 +206,51 @@ export async function checkClientState(): Promise<ClientState> {
   } catch {
     return { isConnected: false, hasAccount: false, hasSpace: false, spaceDid: null, spaceName: null, accountEmail: null }
   }
+}
+
+// ─── Plan Check ──────────────────────────────────────────────────
+
+/**
+ * Check if the account has a payment plan.
+ * @returns true if plan exists, false otherwise
+ */
+export async function checkHasPlan(account: StorachaAccount): Promise<boolean> {
+  try {
+    const plan = await account.plan.get()
+    return plan !== null && plan !== undefined
+  } catch {
+    return false
+  }
+}
+
+// ─── Space Management ────────────────────────────────────────────
+
+/**
+ * Ensure the account has a space. Creates one if needed.
+ * Uses 'safedrop' as the space name.
+ * @param account - The Storacha account to use for space creation
+ * @returns The existing or newly created space
+ */
+export async function ensureSpace(account: StorachaAccount): Promise<StorachaSpace> {
+  const client = await getClient()
+  
+  // Check if we already have a space
+  const existingSpace = client.currentSpace()
+  if (existingSpace) {
+    return existingSpace
+  }
+  
+  // Check if safedrop space exists
+  const spaces = client.spaces()
+  const safedropSpace = spaces.find(s => s.name === 'safedrop')
+  
+  if (safedropSpace) {
+    await client.setCurrentSpace(safedropSpace.did())
+    return safedropSpace
+  }
+  
+  // Create new space with the account
+  const newSpace = await client.createSpace('safedrop', { account })
+  await client.setCurrentSpace(newSpace.did())
+  return newSpace
 }
