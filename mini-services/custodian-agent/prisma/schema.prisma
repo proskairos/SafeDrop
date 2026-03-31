@@ -1,0 +1,25 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./agent.db"
+}
+
+model WillShare {
+  id               Int      @id @default(autoincrement())
+  willId           Int      @unique
+
+  // share2Hex — the raw hex is AES-256-GCM encrypted at rest
+  // Format: base64([IV 12B] [ciphertext] [authTag 16B])
+  // Decrypted when agent needs to call revealShare() on-chain.
+  // If DB_ENCRYPTION_KEY or AGENT_PRIVATE_KEY is not set, stores plaintext (dev mode).
+  share2Encrypted  String
+
+  ownerAddress     String?
+  cid              String?
+  createdAt        DateTime @default(now())
+  revealedAt       DateTime?
+  revealTxHash     String?
+}
