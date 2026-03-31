@@ -319,26 +319,26 @@ async function pollAndReveal() {
 
         // Debug: log contract state
         console.log(`[poll] Will #${share.willId} state: isReleased=${will.isReleased}, revealed=${will.revealed}`)
+// Sync DB state with contract state if out of sync
+if (will.revealed && !share.revealedAt) {
+  console.log(`[poll] SYNC: Will #${share.willId} is revealed on-chain but not in DB. Updating DB state...`)
+  await prisma.willShare.update({
+    where: { willId: share.willId },
+    data: { revealedAt: new Date() },
+  })
+  totalRevealed++
 
-        // Sync DB state with contract state if out of sync
-        if (will.revealed && !share.revealedAt) {
-          console.log(`[poll] SYNC: Will #${share.willId} is revealed on-chain but not in DB. Updating DB state...`)
-          await prisma.willShare.update({
-            where: { willId: share.willId },
-            data: { revealedAt: new Date() },
-          })
-          totalRevealed++
-          io.emit('share-revealed', {
-            willId: share.willId,
-            txHash: share.revealTxHash || 'unknown',
-            revealedAt: new Date().toISOString(),
-            totalRevealed,
-          })
-          continue
-        }
+  io.emit('share-revealed', {
+    willId: share.willId,
+    txHash: share.revealTxHash || 'unknown',
+    revealedAt: new Date().toISOString(),
+    totalRevealed,
+  })
+  continue
+}
 
-        // Reveal if released but not yet revealed on-chain
-        if (will.isReleased && !will.revealed) {
+// Reveal if released but not yet revealed on-chain AND not already attempting
+if (will.isReleased && !will.revealed && !share.revealTxHash) {
           console.log(`[poll] ALERT Release detected for Will #${share.willId}! Revealing share2...`)
 
           io.emit('release-detected', {
@@ -380,6 +380,13 @@ async function pollAndReveal() {
             })
 
             console.log(`[poll] TX submitted: ${hash}. Will check confirmation on next poll cycle...`)
+            
+            // Store tx hash in DB immediately to prevent duplicate attempts
+            await prisma.willShare.update({
+              where: { willId: share.willId },
+              data: { revealTxHash: hash },
+            })
+            
             io.emit('reveal-submitted', {
               willId: share.willId,
               txHash: hash,
@@ -387,11 +394,37 @@ async function pollAndReveal() {
             })
           } catch (txErr) {
             const txMsg = txErr instanceof Error ? txErr.message : 'Unknown transaction error'
-            console.error(`[poll] ERROR Reveal TX failed for Will #${share.willId}:`, txMsg)
-            io.emit('reveal-failed', {
-              willId: share.willId,
-              reason: `${txMsg}. Will retry on next poll.`,
-            })
+            
+            // Check if error is "AlreadyRevealed" - means TX actually succeeded
+            const isAlreadyRevealed = txMsg.includes('0xa3a57894') || txMsg.includes('AlreadyRevealed')
+            
+            if (isAlreadyRevealed) {
+              console.log(`[poll] Will #${share.willId} already revealed (TX succeeded). Syncing DB...`)
+              await prisma.willShare.update({
+                where: { willId: share.willId },
+                data: { revealedAt: new Date() },
+              })
+              totalRevealed++
+              io.emit('share-revealed', {
+                willId: share.willId,
+                txHash: 'unknown',
+                revealedAt: new Date().toISOString(),
+                totalRevealed,
+              })
+            } else {
+              console.error(`[poll] ERROR Reveal TX failed for Will #${share.willId}:`, txMsg)
+              
+              // Clear revealTxHash so it can retry on next poll
+              await prisma.willShare.update({
+                where: { willId: share.willId },
+                data: { revealTxHash: null },
+              })
+              
+              io.emit('reveal-failed', {
+                willId: share.willId,
+                reason: `${txMsg}. Will retry on next poll.`,
+              })
+            }
           }
         }
       } catch (readErr) {

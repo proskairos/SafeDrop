@@ -51,6 +51,12 @@ export interface ShareRevealed {
   totalRevealed: number
 }
 
+export interface RevealSubmitted {
+  willId: number
+  txHash: string
+  submittedAt: string
+}
+
 export interface RevealFailed {
   willId: number
   reason: string
@@ -84,6 +90,7 @@ export type AgentEventMap = {
   'share2-registered': Share2Registered
   'release-detected': ReleaseDetected
   'share-revealed': ShareRevealed
+  'reveal-submitted': RevealSubmitted
   'reveal-failed': RevealFailed
   'poll-summary': PollSummary
   'poll-error': { error: string; lastPollTime: string }

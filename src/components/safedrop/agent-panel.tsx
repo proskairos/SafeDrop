@@ -75,7 +75,7 @@ export function AgentStatusBadge() {
 
 interface ActivityEntry {
   id: string
-  type: 'release-detected' | 'share-revealed' | 'reveal-failed' | 'share2-registered'
+  type: 'release-detected' | 'share-revealed' | 'reveal-failed' | 'share2-registered' | 'reveal-submitted'
   willId: number
   message: string
   timestamp: string
@@ -103,50 +103,78 @@ export function AgentPanel() {
       agentClient.on('agent-info', (data) => setInfo(data)),
       agentClient.on('poll-summary', (data) => setPollData(data)),
       agentClient.on('share2-registered', (data) => {
-        setActivities((prev) => [{
-          id: `reg-${data.willId}-${Date.now()}`,
-          type: 'share2-registered',
-          willId: data.willId,
-          message: `Share2 registered for Will #${data.willId}`,
-          timestamp: data.timestamp,
-        }, ...prev].slice(0, 20))
+        setActivities((prev) => {
+          const newEntry: ActivityEntry = {
+            id: `reg-${data.willId}-${Date.now()}`,
+            type: 'share2-registered',
+            willId: data.willId,
+            message: `Share2 registered for Will #${data.willId}`,
+            timestamp: data.timestamp,
+          }
+          return [newEntry, ...prev].slice(0, 20)
+        })
       }),
       agentClient.on('release-detected', (data) => {
-        setActivities((prev) => [{
-          id: `rel-${data.willId}-${Date.now()}`,
-          type: 'release-detected',
-          willId: data.willId,
-          message: `🚨 Release detected for Will #${data.willId}!`,
-          timestamp: data.detectedAt,
-        }, ...prev].slice(0, 20))
+        setActivities((prev) => {
+          const newEntry: ActivityEntry = {
+            id: `rel-${data.willId}-${Date.now()}`,
+            type: 'release-detected',
+            willId: data.willId,
+            message: `🚨 Release detected for Will #${data.willId}!`,
+            timestamp: data.detectedAt,
+          }
+          return [newEntry, ...prev].slice(0, 20)
+        })
+      }),
+      agentClient.on('reveal-submitted', (data) => {
+        setActivities((prev) => {
+          const newEntry: ActivityEntry = {
+            id: `sub-${data.willId}-${Date.now()}`,
+            type: 'reveal-submitted',
+            willId: data.willId,
+            message: `📤 Reveal TX submitted for Will #${data.willId}`,
+            timestamp: data.submittedAt,
+            txHash: data.txHash,
+          }
+          return [newEntry, ...prev].slice(0, 20)
+        })
       }),
       agentClient.on('share-revealed', (data) => {
-        setActivities((prev) => [{
-          id: `rev-${data.willId}-${Date.now()}`,
-          type: 'share-revealed',
-          willId: data.willId,
-          message: `✅ Share2 revealed for Will #${data.willId}`,
-          timestamp: data.revealedAt,
-          txHash: data.txHash,
-        }, ...prev].slice(0, 20))
+        setActivities((prev) => {
+          const newEntry: ActivityEntry = {
+            id: `rev-${data.willId}-${Date.now()}`,
+            type: 'share-revealed',
+            willId: data.willId,
+            message: `✅ Share2 revealed for Will #${data.willId}`,
+            timestamp: data.revealedAt,
+            txHash: data.txHash,
+          }
+          return [newEntry, ...prev].slice(0, 20)
+        })
       }),
       agentClient.on('reveal-failed', (data) => {
-        setActivities((prev) => [{
-          id: `fail-${data.willId}-${Date.now()}`,
-          type: 'reveal-failed',
-          willId: data.willId,
-          message: `Reveal failed for Will #${data.willId}: ${data.reason}`,
-          timestamp: new Date().toISOString(),
-        }, ...prev].slice(0, 20))
+        setActivities((prev) => {
+          const newEntry: ActivityEntry = {
+            id: `fail-${data.willId}-${Date.now()}`,
+            type: 'reveal-failed',
+            willId: data.willId,
+            message: `Reveal failed for Will #${data.willId}: ${data.reason}`,
+            timestamp: new Date().toISOString(),
+          }
+          return [newEntry, ...prev].slice(0, 20)
+        })
       }),
       agentClient.on('poll-error', (data) => {
-        setActivities((prev) => [{
-          id: `pollerr-${Date.now()}`,
-          type: 'reveal-failed' as const,
-          willId: 0,
-          message: `Poll error: ${data.error}`,
-          timestamp: data.lastPollTime,
-        }, ...prev].slice(0, 20))
+        setActivities((prev) => {
+          const newEntry: ActivityEntry = {
+            id: `pollerr-${Date.now()}`,
+            type: 'reveal-failed' as const,
+            willId: 0,
+            message: `Poll error: ${data.error}`,
+            timestamp: data.lastPollTime,
+          }
+          return [newEntry, ...prev].slice(0, 20)
+        })
       }),
       agentClient.on('status', (data) => {
         // Full status with wills[] — update counts
@@ -313,7 +341,9 @@ export function AgentPanel() {
                           ? 'bg-emerald-500/5 border border-emerald-500/10'
                           : entry.type === 'reveal-failed'
                             ? 'bg-red-500/5 border border-red-500/10'
-                            : 'bg-secondary/30 border border-border/30'
+                            : entry.type === 'reveal-submitted'
+                              ? 'bg-blue-500/5 border border-blue-500/10'
+                              : 'bg-secondary/30 border border-border/30'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
@@ -321,6 +351,7 @@ export function AgentPanel() {
                         entry.type === 'release-detected' ? 'text-amber-400'
                           : entry.type === 'share-revealed' ? 'text-emerald-400'
                           : entry.type === 'reveal-failed' ? 'text-red-400'
+                          : entry.type === 'reveal-submitted' ? 'text-blue-400'
                           : 'text-foreground/80'
                       }`}>
                         {entry.message}
