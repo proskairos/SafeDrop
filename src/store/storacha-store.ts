@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-// ─── Types ────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────
 
 export type StorachaStatus =
   | 'idle'             // Not initialized yet
@@ -20,9 +20,21 @@ interface StorachaState {
   accountEmail: string | null
   agentDid: string | null
   error: string | null
+}
 
-  // Actions
-  init: () => Promise<void>
+// Initial state with agentDid initialized
+const initialState: StorachaState = {
+  status: 'idle',
+  email: '',
+  spaceDid: null,
+  spaceName: null,
+  accountEmail: null,
+  agentDid: null,
+  error: null,
+}
+
+// Actions
+init: () => Promise<void>
   login: (email: string) => Promise<void>
   checkConnection: () => Promise<void>
   cancel: () => void
@@ -33,7 +45,7 @@ interface StorachaState {
 
 let abortController: AbortController | null = null
 
-// ─── Store ────────────────────────────────────────────────────
+// ─── Store ────────────────────────────────────────────
 
 const STORAGE_KEY = 'safedrop-storacha-connected'
 
@@ -47,14 +59,7 @@ function clearConnected() {
   try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
 }
 
-export const useStorachaStore = create<StorachaState>((set, get) => ({
-  status: 'idle',
-  email: '',
-  spaceDid: null,
-  spaceName: null,
-  accountEmail: null,
-  agentDid: null,
-  error: null,
+export const useStorachaStore = create<StorachaState>((set, get) => initialState,
 
   init: async () => {
     const { status } = get()
@@ -71,15 +76,7 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
       if (state.isConnected && state.spaceDid) {
         persistConnected(state.accountEmail, agentDid)
         set({ status: 'ready', spaceDid: state.spaceDid, spaceName: state.spaceName, accountEmail: state.accountEmail, agentDid, error: null })
-      } else if (state.hasAccount && state.hasPlan && !state.hasSpace) {
-        set({ status: 'creating-space', accountEmail: state.accountEmail, email: state.accountEmail || '', agentDid, error: null })
-        try {
-          const account = Object.values(client.accounts())[0]
-          const space = await mod.ensureSpace(account)
-          persistConnected(state.accountEmail, agentDid)
-          set({ status: 'ready', spaceDid: space.did(), spaceName: space.name || null, accountEmail: state.accountEmail, agentDid, error: null })
-        } catch { set({ status: 'disconnected', error: null }) }
-      } else if (state.hasAccount && !state.hasPlan) {
+      } else if (state.hasAccount && !state.hasSpace) {
         set({ status: 'needs-plan', accountEmail: state.accountEmail, email: state.accountEmail || '', agentDid, error: null })
       } else {
         clearConnected()
@@ -103,22 +100,10 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
 
       const client = await mod.getClient()
       const agentDid = client.did()
-      const hasPlan = await mod.checkHasPlan(account)
-      if (signal.aborted) return
 
-      if (!hasPlan) {
-        set({ status: 'needs-plan', accountEmail: email, agentDid, error: null })
-      } else {
-        set({ status: 'creating-space', accountEmail: email, agentDid, error: null })
-        try {
-          const space = await mod.ensureSpace(account)
-          persistConnected(email, agentDid)
-          set({ status: 'ready', spaceDid: space.did(), spaceName: space.name || null, accountEmail: email, agentDid, error: null })
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Failed to create space'
-          set({ status: 'needs-plan', agentDid, error: `Could not create space automatically: ${msg}. Please create one at console.storacha.network.` })
-        }
-      }
+      // Skip plan check - Storacha doesn't have checkHasPlan method
+      // User needs to create space at console.storacha.network after email verification
+      set({ status: 'needs-plan', accountEmail: email, agentDid, error: null })
     } catch (err: unknown) {
       if (signal.aborted) { set({ status: 'disconnected', error: null }); return }
       set({ status: 'disconnected', error: err instanceof Error ? err.message : 'Email verification failed.' })
@@ -132,13 +117,13 @@ export const useStorachaStore = create<StorachaState>((set, get) => ({
       const state = await mod.checkClientState()
       const client = await mod.getClient()
 
-      if (state.hasPlan) {
+      if (state.hasSpace) {
         if (!state.hasSpace) {
           try {
             const account = Object.values(client.accounts())[0]
-            const space = await mod.ensureSpace(account)
+            const space = client.currentSpace()
             persistConnected(state.accountEmail, client.did())
-            set({ status: 'ready', spaceDid: space.did(), spaceName: space.name || null, accountEmail: state.accountEmail, agentDid: client.did(), error: null })
+            set({ status: 'ready', spaceDid: space.did(), spaceName: space.name || null, accountEmail: state.accountEmail, agentDid, error: null })
             return
           } catch { /* fall through */ }
         } else {
