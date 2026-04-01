@@ -228,57 +228,6 @@ Decryption only when `isReleased && revealed`: combine shares → fetch IPFS blo
 
 ## 8. File Structure
 
-```mermaid
-graph TB
-    subgraph src["src/"]
-        subgraph app["app/"]
-            A1["page.tsx<br/>SPA shell"]
-            A2["layout.tsx<br/>Root layout"]
-            A3["globals.css<br/>Global styles"]
-        end
-
-        subgraph lib["lib/"]
-            L1["crypto.ts<br/>AES-256-GCM, XOR split"]
-            L2["contract.ts<br/>ABI, types, explorer URLs"]
-            L3["agent-client.ts<br/>Socket.IO client"]
-            L4["wagmi.ts<br/>Chain config, contract address"]
-            L5["storacha.ts<br/>Storacha IPFS wrapper"]
-        end
-
-        subgraph store["store/"]
-            S1["safedrop-store.ts<br/>UI state, view routing"]
-            S2["storacha-store.ts<br/>IPFS connection state"]
-        end
-
-        subgraph hooks["hooks/"]
-            H1["use-dead-mans-switch.ts<br/>All wagmi hooks"]
-        end
-
-        subgraph components["components/safedrop/"]
-            C1["hero.tsx<br/>Landing hero"]
-            C2["how-it-works.tsx<br/>5-step explainer"]
-            C3["features.tsx<br/>6 feature cards"]
-            C4["use-cases.tsx<br/>Use case examples"]
-            C5["agent-panel.tsx<br/>Agent status badge"]
-            C6["create-safe-form.tsx<br/>Create wizard"]
-            C7["recover-safe.tsx<br/>Recovery (3 modes)"]
-            C8["my-safes.tsx<br/>Dashboard"]
-            C9["navbar.tsx, footer.tsx<br/>Navigation"]
-        end
-    end
-
-    subgraph agent["mini-services/custodian-agent/"]
-        AG1["index.ts<br/>Socket.IO server"]
-        AG2["crypto.ts<br/>AES-256-GCM at rest"]
-        AG3["prisma/schema.prisma<br/>WillShare model"]
-        AG4["agent.md<br/>Full documentation"]
-        AG5[".env.example<br/>Env variables"]
-    end
-
-    style src fill:#e1f5ff
-    style agent fill:#fff4e1
-```
-
 **Detailed file listing:**
 
 ```
