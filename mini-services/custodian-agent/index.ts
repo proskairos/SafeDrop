@@ -461,29 +461,57 @@ process.on('SIGTERM', () => {
   process.exit(0)
 })
 
+// ─── Database Initialization ───────────────────────────────
+async function initializeDatabase() {
+  try {
+    console.log('[agent] Initializing database...')
+    await prisma.$connect()
+    console.log('[agent] Database connected successfully')
+    
+    // Verify tables exist by attempting a simple query
+    await prisma.willShare.count()
+    console.log('[agent] Database tables verified')
+  } catch (err) {
+    console.error('[agent] Database initialization failed:', err)
+    console.error('[agent] Please run: bunx prisma db push')
+    throw err
+  }
+}
+
 // ─── Start ─────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
-  console.log('')
-  console.log('  ╔══════════════════════════════════════════════════╗')
-  console.log('  ║        SafeDrop Custodian Agent                  ║')
-  console.log('  ╠══════════════════════════════════════════════════╣')
-  console.log(`  ║  Port:           ${String(PORT).padEnd(36)}║`)
-  console.log(`  ║  Socket path:    ${SOCKET_PATH.padEnd(36)}║`)
-  console.log(`  ║  Encryption:     ${(encryptionEnabled ? 'AES-256-GCM' : 'DISABLED (dev)').padEnd(36)}║`)
-  console.log(`  ║  Wallet:         ${(agentAddress || 'NOT CONFIGURED (monitor-only)').padEnd(36)}║`)
-  console.log(`  ║  Poll interval:  ${(POLL_INTERVAL / 1000 + 's').padEnd(36)}║`)
-  console.log(`  ║  Contract:       ${CONTRACT_ADDRESS.padEnd(36)}║`)
-  console.log('  ╠══════════════════════════════════════════════════╣')
-  console.log(`  ║  Health:         http://localhost:${PORT}/health${' '.repeat(20)}║`)
-  console.log('  ╚══════════════════════════════════════════════════╝')
-  console.log('')
-})
+async function startServer() {
+  try {
+    // Initialize database first
+    await initializeDatabase()
+    
+    // Then start the HTTP server
+    httpServer.listen(PORT, () => {
+      console.log('')
+      console.log('  ╔══════════════════════════════════════════════════╗')
+      console.log('  ║        SafeDrop Custodian Agent                  ║')
+      console.log('  ╠══════════════════════════════════════════════════╣')
+      console.log(`  ║  Port:           ${String(PORT).padEnd(36)}║`)
+      console.log(`  ║  Socket path:    ${SOCKET_PATH.padEnd(36)}║`)
+      console.log(`  ║  Encryption:     ${(encryptionEnabled ? 'AES-256-GCM' : 'DISABLED (dev)').padEnd(36)}║`)
+      console.log(`  ║  Wallet:         ${(agentAddress || 'NOT CONFIGURED (monitor-only)').padEnd(36)}║`)
+      console.log(`  ║  Poll interval:  ${(POLL_INTERVAL / 1000 + 's').padEnd(36)}║`)
+      console.log(`  ║  Contract:       ${CONTRACT_ADDRESS.padEnd(36)}║`)
+      console.log('  ╠══════════════════════════════════════════════════╣')
+      console.log(`  ║  Health:         http://localhost:${PORT}/health${' '.repeat(20)}║`)
+      console.log('  ╚══════════════════════════════════════════════════╝')
+      console.log('')
+    })
+  } catch (err) {
+    console.error('[agent] Failed to start server:', err)
+    throw err
+  }
+}
 
 // Keep event loop alive
 const keepAlive = setInterval(() => {}, 10_000)
 process.on('exit', () => clearInterval(keepAlive))
 
-// Initial poll after 5s delay
+// Initial poll after 5s delay (runs after server starts)
 setTimeout(() => {
   pollAndReveal().catch((err) => console.error('[agent] Initial poll error:', err))
 }, 5000)
@@ -499,6 +527,14 @@ async function pollLoop() {
     }
   }
 }
-pollLoop().catch((err) => {
-  console.error('[agent] Fatal poll loop error:', err)
+
+// Start the server
+startServer().then(() => {
+  // Start poll loop after server is ready
+  pollLoop().catch((err) => {
+    console.error('[agent] Fatal poll loop error:', err)
+  })
+}).catch((err) => {
+  console.error('[agent] Failed to start server:', err)
+  process.exit(1)
 })
