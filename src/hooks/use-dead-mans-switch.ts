@@ -1,10 +1,10 @@
 'use client'
 
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi'
 import { decodeEventLog } from 'viem'
-import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { TESTAMENT_REGISTRY_ABI, type OnChainWill } from '@/lib/contract'
+import { useQueryClient, useQueries } from '@tanstack/react-query'
+import { useEffect, useState, useMemo } from 'react'
+import { TESTAMENT_REGISTRY_ABI, type OnChainWill, getWillStatus } from '@/lib/contract'
 import { CONTRACT_ADDRESS } from '@/lib/wagmi'
 
 const contractConfig = {
@@ -342,4 +342,68 @@ export function useMyWillIds() {
 export function useMyBeneficiaryWillIds() {
   const { address } = useAccount()
   return useGetBeneficiaryWills(address)
+}
+
+// ─── Stats: Calculate on-chain wills statistics ────────────
+export function useOnChainWillsStats(ownerAddress: `0x${string}` | undefined) {
+  const { data: willIds, isLoading: isLoadingIds } = useGetOwnerWills(ownerAddress)
+  const publicClient = usePublicClient()
+
+  // Fetch all will data for this owner using useQueries
+  const willQueries = useQueries({
+    queries: (willIds ?? []).map((willId) => ({
+      queryKey: ['will', willId],
+      queryFn: async () => {
+        if (!publicClient) return null
+        const data = await publicClient.readContract({
+          address: contractConfig.address,
+          abi: contractConfig.abi,
+          functionName: 'getWill',
+          args: [BigInt(willId)],
+        })
+        return data
+      },
+      select: (data): OnChainWill | null => {
+        if (!data) return null
+        const will = data as unknown as {
+          owner: string
+          beneficiary: string
+          cid: string
+          encryptedKey: string
+          lastCheckIn: bigint
+          timeoutDuration: bigint
+          isReleased: boolean
+          revealed: boolean
+          exists: boolean
+        }
+        if (!will.exists) return null
+        return { ...will, willId }
+      },
+      enabled: !!publicClient,
+    })),
+  })
+
+  const isLoading = isLoadingIds || willQueries.some((q) => q.isLoading)
+
+  // Calculate stats from fetched wills
+  const stats = useMemo(() => {
+    if (!willIds || willIds.length === 0) {
+      return { total: 0, active: 0, released: 0 }
+    }
+
+    const wills = willQueries
+      .map((q) => q.data)
+      .filter((w): w is NonNullable<typeof w> => w != null)
+
+    const total = wills.length
+    const active = wills.filter((w) => !w.isReleased).length
+    const released = wills.filter((w) => w.isReleased).length
+
+    return { total, active, released }
+  }, [willIds, willQueries])
+
+  return {
+    ...stats,
+    isLoading,
+  }
 }

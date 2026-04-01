@@ -29,6 +29,7 @@ export function Footer() {
       title: 'Community',
       links: [
         { label: 'GitHub', href: 'https://github.com/proskairos/safedrop', icon: Github },
+        { label: 'Project Showcase', href: '/SafeDrop Project Showcase.pdf', icon: ExternalLink },
         { label: 'Protocol Labs', href: 'https://protocol.ai', icon: ExternalLink },
         { label: 'Storacha', href: 'https://storacha.network', icon: ExternalLink },
       ],
@@ -41,10 +42,12 @@ export function Footer() {
       return
     }
     if (link.href) {
-      if (link.href.startsWith('http')) {
+      // Handle PDF files and external links
+      if (link.href.startsWith('http') || link.href.endsWith('.pdf')) {
         window.open(link.href, '_blank', 'noopener,noreferrer')
         return
       }
+      // Handle anchor links
       setCurrentView('home')
       setTimeout(() => {
         const el = document.querySelector(link.href!)

@@ -38,6 +38,7 @@ import {
   useRevealShare,
   useCanRelease,
   useGetTimeUntilRelease,
+  useOnChainWillsStats,
 } from '@/hooks/use-dead-mans-switch'
 import {
   type OnChainWill,
@@ -47,7 +48,9 @@ import {
   truncateAddress,
   getExplorerTxUrl,
   getExplorerAddressUrl,
+  TESTAMENT_REGISTRY_ABI,
 } from '@/lib/contract'
+import { CONTRACT_ADDRESS } from '@/lib/wagmi'
 import { useToast } from '@/hooks/use-toast'
 import { AgentPanel } from '@/components/safedrop/agent-panel'
 
@@ -457,8 +460,10 @@ function OnChainWillById({ willId, index }: { willId: number; index: number }) {
 }
 
 export function MySafes() {
-  const { safes, setCurrentView, refreshSafeStatuses } = useSafeDropStore()
+  const { setCurrentView } = useSafeDropStore()
   const { address, isConnected } = useAccount()
+  const { data: willIds, isLoading: isLoadingIds } = useGetOwnerWills(address as `0x${string}`)
+  const { total, active, released, isLoading: isLoadingStats } = useOnChainWillsStats(address as `0x${string}`)
 
   // Hydration guard
   const mounted = useSyncExternalStore(
@@ -466,14 +471,6 @@ export function MySafes() {
     () => true,
     () => false,
   )
-
-  useEffect(() => {
-    refreshSafeStatuses()
-  }, [refreshSafeStatuses])
-
-  const activeSafes = safes.filter((s) => s.status === 'active' || s.status === 'warning')
-  const expiredSafes = safes.filter((s) => s.status === 'expired')
-  const releasedSafes = safes.filter((s) => s.status === 'released')
 
   return (
     <section className="relative py-24 lg:py-32 min-h-screen">
@@ -492,12 +489,11 @@ export function MySafes() {
         </motion.div>
 
         {/* Stats */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
           {[
-            { label: 'Total', value: safes.length, color: 'text-foreground' },
-            { label: 'Active', value: activeSafes.length, color: 'text-emerald-400' },
-            { label: 'Warning', value: expiredSafes.length, color: 'text-amber-400' },
-            { label: 'Released', value: releasedSafes.length, color: 'text-blue-400' },
+            { label: 'Total', value: isLoadingIds ? '...' : total, color: 'text-foreground' },
+            { label: 'Active', value: isLoadingIds || isLoadingStats ? '...' : active, color: 'text-emerald-400' },
+            { label: 'Released', value: isLoadingIds || isLoadingStats ? '...' : released, color: 'text-blue-400' },
           ].map((stat) => (
             <div key={stat.label} className="glass-card rounded-xl p-4 text-center">
               <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
@@ -531,41 +527,15 @@ export function MySafes() {
           </>
         )}
 
-        {/* Local safes */}
-        {safes.length > 0 && (
-          <div className="space-y-4">
-            {mounted && isConnected && <div className="pt-2 border-t border-border/30" />}
-            <div className="flex items-center gap-2 mb-2">
-              <Shield className="h-4 w-4 text-muted-foreground" />
-              <h4 className="text-sm font-semibold text-muted-foreground">Local Safes (Demo)</h4>
-            </div>
-            {safes
-              .filter((s) => s.status !== 'released')
-              .map((safe, index) => (
-                <LocalSafeCard key={safe.id} safe={safe} index={index} />
-              ))}
-            {releasedSafes.length > 0 && (
-              <div className="pt-6 border-t border-border/50">
-                <h4 className="text-sm font-medium text-muted-foreground mb-4 flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-400" />Released</h4>
-                <div className="space-y-4">
-                  {releasedSafes.map((safe, index) => (
-                    <LocalSafeCard key={safe.id} safe={safe} index={index} />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Empty state */}
-        {safes.length === 0 && (!mounted || !isConnected) && (
+        {/* Empty state when connected but no wills */}
+        {!isLoadingIds && !isLoadingStats && total === 0 && mounted && isConnected && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card rounded-2xl p-12 text-center">
             <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-primary/10 mb-4">
               <Shield className="h-8 w-8 text-primary/50" />
             </div>
-            <h3 className="text-lg font-semibold text-foreground mb-2">No Wills Yet</h3>
+            <h3 className="text-lg font-semibold text-foreground mb-2">No On-Chain Wills Yet</h3>
             <p className="text-sm text-muted-foreground mb-6 max-w-sm mx-auto">
-              Connect your wallet and create your first encrypted will with a trustless on-chain timeout.
+              Create your first encrypted will with a trustless on-chain timeout using the Create Will form.
             </p>
             <Button onClick={() => setCurrentView('create')} className="bg-primary hover:bg-primary/90 text-primary-foreground gap-2 btn-glow">
               <Shield className="h-4 w-4" />

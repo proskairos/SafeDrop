@@ -97,7 +97,7 @@ export function HowItWorks() {
           className="space-y-5"
         >
           {steps.map((step, i) => (
-            <motion.div key={step.number} variants={fadeUp}>
+            <motion.div key={`step-${i}`} variants={fadeUp}>
               <div className="relative glass-card glass-card-hover rounded-2xl p-6 sm:p-8 flex gap-5 sm:gap-6 items-start transition-all duration-300">
                 {/* Step number — left accent */}
                 <div className="shrink-0 flex flex-col items-center">
