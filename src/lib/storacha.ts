@@ -75,12 +75,13 @@ export async function getClient(): Promise<StorachaClient> {
 export async function loginEmail(
   email: string,
   opts?: { signal?: AbortSignal },
-): Promise<void> {
+): Promise<StorachaAccount> {
   const client = await getClient()
-  await client.login(email, {
+  const account = await client.login(email, {
     signal: opts?.signal,
     appName: 'SafeDrop',
   })
+  return account
 }
 
 // ─── Upload ───────────────────────────────────────────────────
@@ -124,7 +125,7 @@ export async function uploadEncryptedBlob(
     }
   }
 
-  const file = new Blob([data.buffer], { type: 'application/octet-stream' })
+  const file = new Blob([data.buffer as ArrayBuffer], { type: 'application/octet-stream' })
   const cid = await client.uploadFile(file, {
     signal: opts?.signal,
     ...(opts?.onShardStored && {
