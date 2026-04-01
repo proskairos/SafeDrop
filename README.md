@@ -2,7 +2,7 @@
 
 ## 1. What SafeDrop Is
 
-SafeDrop is a trustless dead man's switch dApp on Filecoin. A user (the "owner") writes a secret message, encrypts it client-side with AES-256-GCM, XOR-splits the key into two shares, stores the ciphertext on IPFS via Storacha, and registers the will on the Filecoin blockchain with an inactivity timer. An autonomous **Custodian Agent** holds share2 off-chain (encrypted at rest), monitors the contract every 30 seconds, and auto-reveals share2 on-chain when the timer expires. The beneficiary combines both shares from the recovery link + on-chain data to decrypt.
+SafeDrop is a trustless dead man's switch dApp on Filecoin. A user (the "owner") writes a secret message, encrypts it client-side with AES-256-GCM, XOR-splits the key into two shares, stores the ciphertext on IPFS via Storacha, and registers the will on the Filecoin blockchain with an inactivity timer. An autonomous Custodian Agent holds share2 off-chain (encrypted at rest), monitors the contract every 30 seconds, and auto-reveals share2 on-chain when the timer expires. The beneficiary combines both shares from the recovery link + on-chain data to decrypt.
 
 The app runs on Filecoin Calibration Testnet. The frontend deploys to Vercel; the Custodian Agent deploys to Render as a background service.
 
@@ -10,14 +10,46 @@ The app runs on Filecoin Calibration Testnet. The frontend deploys to Vercel; th
 
 ## 2. Architecture Overview
 
-```
-Browser (Next.js)          Custodian Agent          Filecoin FEVM          IPFS
-┌─────────────────┐    ┌──────────────────┐    ┌──────────────────┐    ┌──────────┐
-│ AES-256-GCM     │    │ Socket.IO server  │    │ DeadManSwitch    │    │ Storacha  │
-│ XOR key split    │───►│ Contract polling  │◄──►│ Registry.sol     │    │ IPFS      │
-│ Recovery link    │ WS │ Auto-reveal       │    │ Timer + reveal   │    │ Gateways  │
-└─────────────────┘    │ AES at rest DB     │    └──────────────────┘    └──────────┘
-                       └──────────────────┘
+```mermaid
+flowchart TB
+    subgraph Browser["Browser (Next.js)"]
+        A[AES-256-GCM Encryption]
+        B[XOR Key Split]
+        C[Recovery Link Generation]
+        A --> B --> C
+    end
+
+    subgraph Agent["Custodian Agent"]
+        D[Socket.IO Server]
+        E[Contract Polling<br/>Every 30s]
+        F[Auto-Reveal Logic]
+        G[AES-256-GCM<br/>Encrypted DB]
+        D --> E --> F
+        D --> G
+    end
+
+    subgraph Blockchain["Filecoin FEVM"]
+        H[DeadManSwitch<br/>Registry.sol]
+        I[Timer Management]
+        J[Reveal State]
+        H --> I --> J
+    end
+
+    subgraph Storage["IPFS / Storacha"]
+        K[Encrypted Ciphertext]
+        L[Public Gateways]
+        K --> L
+    end
+
+    C -->|WebSocket| D
+    D <-->|Read/Write| H
+    D <-->|Auto-Reveal| H
+    H <-->|CID Storage| K
+
+    style Browser fill:#e1f5ff
+    style Agent fill:#fff4e1
+    style Blockchain fill:#ffe1f5
+    style Storage fill:#e1ffe1
 ```
 
 | Layer | Technology | Purpose |
@@ -75,15 +107,56 @@ A single AES-256 key is split into two shares via XOR (one-time pad). Neither sh
 - Wrong key or tampered data → graceful null return, no crash
 
 ### Deployment
-- **Frontend env:** `NEXT_PUBLIC_AGENT_URL` → deployed agent URL (empty = sandbox proxy mode)
-- **Agent env:** `AGENT_PRIVATE_KEY`, `DB_ENCRYPTION_KEY`, `PORT`, `SOCKET_PATH`
-- **Health:** `GET /health` returns JSON for container orchestration
+
+#### Live Deployments
+
+| Service | URL | Platform |
+|---------|-----|----------|
+| **Frontend UI** | https://safe-drop-testnet.vercel.app/ | Vercel |
+| **Custodian Agent** | https://safedrop-zhu9.onrender.com/ | Render |
+
+#### Environment Variables
+
+**Frontend:**
+- `NEXT_PUBLIC_AGENT_URL` → deployed agent URL (empty = sandbox proxy mode)
+
+**Agent:**
+- `AGENT_PRIVATE_KEY` → Agent's wallet private key
+- `DB_ENCRYPTION_KEY` → 64 hex chars for AES-256-GCM encryption at rest
+- `PORT` → Server port (default: 3001)
+- `SOCKET_PATH` → WebSocket path (default: /socket.io)
+
+**Health Check:**
+- `GET /health` returns JSON for container orchestration
 
 ---
 
 ## 5. Create Will Flow
 
-4-step wizard in `create-safe-form.tsx`:
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User
+    participant UI as Next.js UI
+    participant Crypto as Web Crypto API
+    participant Storacha as IPFS/Storacha
+    participant Agent as Custodian Agent
+    participant Chain as Filecoin FEVM
+
+    User->>UI: 1. Enter content (title, message, file)
+    User->>UI: 2. Set beneficiary & timer (1-3650 days)
+    UI->>Crypto: 3. AES-256-GCM encrypt
+    Crypto->>Crypto: 4. XOR key split (share1, share2)
+    UI->>Storacha: 5. Upload encrypted blob
+    Storacha-->>UI: 6. Return CID
+    UI->>Chain: 7. createWill(CID, beneficiary, timer)
+    Chain-->>UI: 8. Transaction confirmed
+    UI->>Agent: 9. Register share2 (WebSocket)
+    Agent->>Agent: 10. Encrypt share2 at rest
+    UI-->>User: 11. Recovery URL + QR code
+```
+
+**4-step wizard in `create-safe-form.tsx`:**
 
 1. **Content** — title, message, optional file (max 10MB)
 2. **Recipient & Timer** — beneficiary address, 1-3650 days timeout
@@ -97,7 +170,34 @@ A single AES-256 key is split into two shares via XOR (one-time pad). Neither sh
 
 ## 6. Recovery Flow
 
-Three modes in `recover-safe.tsx`:
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User
+    participant UI as Recovery UI
+    participant Chain as Filecoin FEVM
+    participant Agent as Custodian Agent
+    participant IPFS as Storacha/IPFS
+    participant Crypto as Web Crypto API
+
+    User->>UI: 1. Access recovery link (or enter will ID + share1)
+    UI->>Chain: 2. Query will state
+    Chain-->>UI: 3. Return isReleased, revealed, CID
+    alt isReleased && revealed
+        UI->>Chain: 4. Fetch share2 from contract
+        Chain-->>UI: 5. Return share2
+        UI->>Crypto: 6. Combine share1 + share2
+        UI->>IPFS: 7. Fetch encrypted blob by CID
+        IPFS-->>UI: 8. Return ciphertext
+        UI->>Crypto: 9. AES-256-GCM decrypt
+        Crypto-->>UI: 10. Return decrypted message
+        UI-->>User: 11. Display secret
+    else Not released or not revealed
+        UI-->>User: Show countdown / pending status
+    end
+```
+
+**Three modes in `recover-safe.tsx`:**
 - **Recovery link:** auto-parses `?view=recover&willId=123#s1=<share1>` from URL
 - **Manual entry:** user enters will ID + share1
 - **Browse chain:** user enters owner address, lists all wills
@@ -128,37 +228,93 @@ Decryption only when `isReleased && revealed`: combine shares → fetch IPFS blo
 
 ## 8. File Structure
 
+```mermaid
+graph TB
+    subgraph src["src/"]
+        subgraph app["app/"]
+            A1["page.tsx<br/>SPA shell"]
+            A2["layout.tsx<br/>Root layout"]
+            A3["globals.css<br/>Global styles"]
+        end
+
+        subgraph lib["lib/"]
+            L1["crypto.ts<br/>AES-256-GCM, XOR split"]
+            L2["contract.ts<br/>ABI, types, explorer URLs"]
+            L3["agent-client.ts<br/>Socket.IO client"]
+            L4["wagmi.ts<br/>Chain config, contract address"]
+            L5["storacha.ts<br/>Storacha IPFS wrapper"]
+        end
+
+        subgraph store["store/"]
+            S1["safedrop-store.ts<br/>UI state, view routing"]
+            S2["storacha-store.ts<br/>IPFS connection state"]
+        end
+
+        subgraph hooks["hooks/"]
+            H1["use-dead-mans-switch.ts<br/>All wagmi hooks"]
+        end
+
+        subgraph components["components/safedrop/"]
+            C1["hero.tsx<br/>Landing hero"]
+            C2["how-it-works.tsx<br/>5-step explainer"]
+            C3["features.tsx<br/>6 feature cards"]
+            C4["use-cases.tsx<br/>Use case examples"]
+            C5["agent-panel.tsx<br/>Agent status badge"]
+            C6["create-safe-form.tsx<br/>Create wizard"]
+            C7["recover-safe.tsx<br/>Recovery (3 modes)"]
+            C8["my-safes.tsx<br/>Dashboard"]
+            C9["navbar.tsx, footer.tsx<br/>Navigation"]
+        end
+    end
+
+    subgraph agent["mini-services/custodian-agent/"]
+        AG1["index.ts<br/>Socket.IO server"]
+        AG2["crypto.ts<br/>AES-256-GCM at rest"]
+        AG3["prisma/schema.prisma<br/>WillShare model"]
+        AG4["agent.md<br/>Full documentation"]
+        AG5[".env.example<br/>Env variables"]
+    end
+
+    style src fill:#e1f5ff
+    style agent fill:#fff4e1
+```
+
+**Detailed file listing:**
+
 ```
 src/
-  app/page.tsx                    # SPA shell
+  app/
+    page.tsx                    # SPA shell
+    layout.tsx                  # Root layout
+    globals.css                 # Global styles
   lib/
-    crypto.ts                     # AES-256-GCM, XOR split/combine, recovery URL
-    contract.ts                   # ABI, types, explorer URLs
-    agent-client.ts               # Socket.IO client (sandbox + deployed modes)
-    wagmi.ts                      # Chain config, contract address
-    storacha.ts                   # Storacha IPFS wrapper
+    crypto.ts                   # AES-256-GCM, XOR split/combine, recovery URL
+    contract.ts                 # ABI, types, explorer URLs
+    agent-client.ts             # Socket.IO client (sandbox + deployed modes)
+    wagmi.ts                    # Chain config, contract address
+    storacha.ts                 # Storacha IPFS wrapper
   store/
-    safedrop-store.ts             # UI state, view routing
-    storacha-store.ts             # IPFS connection state
+    safedrop-store.ts           # UI state, view routing
+    storacha-store.ts           # IPFS connection state
   hooks/
-    use-dead-mans-switch.ts       # All wagmi hooks (reads + writes)
+    use-dead-mans-switch.ts     # All wagmi hooks (reads + writes)
   components/safedrop/
-    hero.tsx                      # Landing hero (key-split animation)
-    how-it-works.tsx              # 5-step explainer
-    features.tsx                  # 6 feature cards
-    use-cases.tsx                 # Use case examples + CTA
-    agent-panel.tsx               # Agent status badge + dashboard panel
-    create-safe-form.tsx          # Create wizard (dual agent flow)
-    recover-safe.tsx              # Recovery (3 modes)
-    my-safes.tsx                  # Dashboard with agent panel
-    navbar.tsx, footer.tsx        # Navigation
+    hero.tsx                    # Landing hero (key-split animation)
+    how-it-works.tsx            # 5-step explainer
+    features.tsx                # 6 feature cards
+    use-cases.tsx               # Use case examples + CTA
+    agent-panel.tsx             # Agent status badge + dashboard panel
+    create-safe-form.tsx        # Create wizard (dual agent flow)
+    recover-safe.tsx            # Recovery (3 modes)
+    my-safes.tsx                # Dashboard with agent panel
+    navbar.tsx, footer.tsx      # Navigation
 
 mini-services/custodian-agent/
-  index.ts                       # Socket.IO server + polling + auto-reveal
-  crypto.ts                      # AES-256-GCM encrypt/decrypt at rest
-  prisma/schema.prisma           # WillShare model (encrypted share2)
-  agent.md                       # Full documentation
-  .env.example                   # Environment variables template
+  index.ts                     # Socket.IO server + polling + auto-reveal
+  crypto.ts                    # AES-256-GCM encrypt/decrypt at rest
+  prisma/schema.prisma         # WillShare model (encrypted share2)
+  agent.md                     # Full documentation
+  .env.example                 # Environment variables template
 ```
 
 ---
